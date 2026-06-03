@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+.env
 
 # Local IDE / OS files
 .vscode/
@@ -20,8 +21,18 @@ hallucination/.cache/
 hallucination/results/
 hallucination/tools/
 hallucination/run_all_fixes.sh
+results/
 paper/
 
 # Runtime logs
 *.log
 nohup.out
+
+# Large binary artifacts
+*.zip
+*.tar
+*.tar.gz
+*.pt
+*.pth
+*.ckpt
+*.safetensors

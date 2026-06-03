@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # download_data.sh — download POPE annotations and COCO val2014 data
-# Run from the hallucination/ directory: bash download_data.sh
-set -e
+# Run from any directory: bash hallucination/download_data.sh
+set -euo pipefail
+cd "$(dirname "$0")"
+
+for cmd in wget unzip find wc; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "Missing required command: $cmd"
+        exit 1
+    fi
+done
 
 mkdir -p data/pope data/coco/val2014 data/coco/annotations
 

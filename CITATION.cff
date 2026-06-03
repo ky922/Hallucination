@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite this repository."
+title: "Hallucination: Training-Free Hallucination Mitigation for LVLMs"
+authors:
+  - name: "Hallucination Contributors"
+repository-code: "https://github.com/ky922/Hallucination"
+date-released: "2026-06-03"
+license: "MIT"

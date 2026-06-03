@@ -1,0 +1,16 @@
+name: hallucination-lvlm
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - torch>=2.0.0
+      - transformers>=4.40.0
+      - accelerate>=0.28.0
+      - Pillow>=10.0.0
+      - tqdm>=4.65.0
+      - numpy>=1.24.0
+      - pycocotools>=2.0.7
+      - nltk>=3.8.1
+      - sentencepiece>=0.1.99
