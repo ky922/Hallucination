@@ -8,6 +8,8 @@ runtime expectations, and commands needed to reproduce the experiments.
 Included:
 
 - training-free inference methods: QCVR and IACD;
+- baseline and method presets under `hallucination/configs/`;
+- shared runtime helpers under `hallucination/utils/`;
 - model wrappers for LLaVA-1.5-7B, VCD, ICD, and QCVR/IACD;
 - POPE and CHAIR evaluation code;
 - smoke, partial, and full reproduction scripts;

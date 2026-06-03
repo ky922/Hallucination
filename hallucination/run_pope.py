@@ -25,198 +25,25 @@ Usage examples:
 """
 
 import argparse
-import json
 import os
-import random
 import sys
 import time
-from datetime import datetime
 from statistics import mean, stdev
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
-import torch
 from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from configs.pope import (  # noqa: E402
+    GENERATION_KEYS,
+    baseline_choices,
+    select_baseline_groups,
+)
+from utils.runtime import release_memory, save_json, set_seed, timestamped_output_dir  # noqa: E402
 from models.llava_wrapper import LLaVAWrapper
 from models.qcvr_wrapper import QCVRWrapper
 from models.sota_wrappers import VCDWrapper, ICDWrapper
 from eval.pope_eval import load_pope, parse_yes_no, compute_pope_metrics
-
-
-# ── Reproducibility ────────────────────────────────────────────────────────────
-
-def set_seed(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-# ── Baseline configurations ────────────────────────────────────────────────────
-# "use_logits": True  → use generate_yes_no_logits() (no text parsing bias)
-# "stochastic":  True → repeat n_runs times and report mean ± std
-# All other keys are forwarded to generate() / generate_yes_no_logits()
-
-BASELINES: Dict[str, dict] = {
-    # ── Deterministic baselines ────────────────────────────────────────────────
-    "greedy_logits": {
-        "description":    "Greedy + logits-based yes/no decision",
-        "use_logits":     True,
-        "stochastic":     False,
-        "do_sample":      False,
-        "num_beams":      1,
-        "system_prompt":  None,
-        "max_new_tokens": 8,
-    },
-    "beam_search_logits": {
-        "description":    "Beam search (n=4) + logits yes/no",
-        "use_logits":     True,
-        "stochastic":     False,
-        "do_sample":      False,
-        "num_beams":      4,
-        "length_penalty": 0.9,
-        "no_repeat_ngram_size": 3,
-        "early_stopping": True,
-        "system_prompt":  None,
-        "max_new_tokens": 16,
-    },
-    # ── Stochastic baselines (will be run n_runs times) ────────────────────────
-    "sampling_low_temp": {
-        "description":    "Sampling (t=0.3, top_p=0.9) — low-temperature",
-        "use_logits":     False,
-        "stochastic":     True,
-        "do_sample":      True,
-        "temperature":    0.3,
-        "top_p":          0.9,
-        "num_beams":      1,
-        "system_prompt":  None,
-        "max_new_tokens": 16,
-    },
-    # ── Prompt engineering ─────────────────────────────────────────────────────
-    "prompt_careful_logits": {
-        "description":    "Careful grounding prompt + logits yes/no",
-        "use_logits":     True,
-        "stochastic":     False,
-        "do_sample":      False,
-        "num_beams":      1,
-        "system_prompt":  (
-            "Please answer based only on what is clearly visible in the image. "
-            "Do not guess or assume the presence of any object."
-        ),
-        "max_new_tokens": 8,
-    },
-}
-
-# ── QCVR+IACD method configurations ───────────────────────────────────────────
-# These use QCVRWrapper instead of LLaVAWrapper.
-# "use_qcvr" / "use_iacd" control which components are active (for ablation).
-
-QCVR_BASELINES: Dict[str, dict] = {
-    "qcvr_only": {
-        "description":    "QCVR only (attention re-weighting, no IACD)",
-        "use_qcvr":       True,
-        "use_iacd":       False,
-        "lm_layer":       16,
-        "tau":            0.1,
-        "lambda_":        1.0,
-        "stochastic":     False,
-    },
-    "iacd_only": {
-        "description":    "IACD only (Inert-Anchored contrastive decoding, no QCVR)",
-        "use_qcvr":       False,
-        "use_iacd":       True,
-        "lm_layer":       16,
-        "tau":            0.1,
-        "lambda_":        1.0,
-        "stochastic":     False,
-    },
-    "qcvr_iacd": {
-        "description":    "QCVR + IACD (full method)",
-        "use_qcvr":       True,
-        "use_iacd":       True,
-        "lm_layer":       16,
-        "tau":            0.1,
-        "lambda_":        1.0,
-        "stochastic":     False,
-    },
-    "qcvr_iacd_tau02": {
-        "description":    "QCVR + IACD (tau=0.2, ablation)",
-        "use_qcvr":       True,
-        "use_iacd":       True,
-        "lm_layer":       16,
-        "tau":            0.2,
-        "lambda_":        1.0,
-        "stochastic":     False,
-    },
-    "qcvr_iacd_lambda05": {
-        "description":    "QCVR + IACD (lambda=0.5, ablation)",
-        "use_qcvr":       True,
-        "use_iacd":       True,
-        "lm_layer":       16,
-        "tau":            0.1,
-        "lambda_":        0.5,
-        "stochastic":     False,
-    },
-}
-
-# Key QCVR subset for explicit QCVR runs.
-QCVR_CORE = {k: QCVR_BASELINES[k] for k in ("qcvr_only", "iacd_only", "qcvr_iacd")}
-
-# ── SOTA comparison baselines ──────────────────────────────────────────────────
-# These use VCDWrapper / ICDWrapper from models/sota_wrappers.py.
-# "model_class": the class to instantiate, "init_kwargs": forwarded to __init__.
-
-SOTA_BASELINES: Dict[str, dict] = {
-    # VCD: Visual Contrastive Decoding (Leng et al., CVPR 2024)
-    # https://arxiv.org/abs/2311.16922
-    "vcd": {
-        "description":  "VCD (noise_std=0.1, alpha=1.0) — CVPR 2024",
-        "model_class":  "VCDWrapper",
-        "init_kwargs":  {"noise_std": 0.1, "alpha": 1.0, "beta_apc": 0.1},
-        "stochastic":   False,
-    },
-    "vcd_tuned": {
-        "description":  "VCD tuned (APC, alpha=0.2, noise_std=0.05, noise_steps=3)",
-        "model_class":  "VCDWrapper",
-        "init_kwargs":  {"noise_std": 0.05, "alpha": 0.2, "beta_apc": 0.05, "noise_steps": 3},
-        "stochastic":   False,
-    },
-    # ICD: Instruction Contrastive Decoding (Leng et al., ACL Findings 2024)
-    # https://arxiv.org/abs/2403.18715
-    "icd": {
-        "description":  "ICD (alpha=1.0) — ACL Findings 2024",
-        "model_class":  "ICDWrapper",
-        "init_kwargs":  {"alpha": 1.0, "beta_apc": 0.1},
-        "stochastic":   False,
-    },
-}
-
-# ── Required baseline preset ──────────────────────────────────────────────────
-# Standard inference + decoding strategy changes + prompt rewrite + 2 SOTA
-# + our full method. Kept as the default `all` set for one global run.
-DEFAULT_BASELINES = {k: BASELINES[k] for k in (
-    "greedy_logits", "beam_search_logits",
-    "sampling_low_temp",
-    "prompt_careful_logits",
-)}
-DEFAULT_SOTA = {k: SOTA_BASELINES[k] for k in ("vcd", "icd")}
-DEFAULT_QCVR = {"qcvr_iacd": QCVR_BASELINES["qcvr_iacd"]}
-
-# Backward-compatible aliases for older launch scripts.
-KEY_BASELINES = DEFAULT_BASELINES
-KEY_SOTA      = DEFAULT_SOTA
-KEY_QCVR      = DEFAULT_QCVR
-SLIM_BASELINES = DEFAULT_BASELINES
-SLIM_SOTA      = DEFAULT_SOTA
-SLIM_QCVR      = DEFAULT_QCVR
-
-# kwargs that go directly to generate() / generate_yes_no_logits()
-_GEN_KEYS = {"do_sample", "temperature", "top_p", "num_beams",
-             "length_penalty", "no_repeat_ngram_size", "early_stopping",
-             "system_prompt", "max_new_tokens"}
 
 
 # ── Single-run evaluation ──────────────────────────────────────────────────────
@@ -232,7 +59,7 @@ def run_one(
 ) -> dict:
     """One evaluation pass. Returns compute_pope_metrics output."""
     set_seed(seed)
-    gen_kwargs = {k: v for k, v in config.items() if k in _GEN_KEYS}
+    gen_kwargs = {k: v for k, v in config.items() if k in GENERATION_KEYS}
     use_logits = config.get("use_logits", False)
     preds, labels = [], []
 
@@ -341,9 +168,7 @@ def main() -> None:
     parser.add_argument("--split",       default="all",
                         choices=["random", "popular", "adversarial", "all"])
     parser.add_argument("--baseline",    default="all",
-                        choices=(list(BASELINES) + list(QCVR_BASELINES) +
-                                 list(SOTA_BASELINES) +
-                                 ["all", "required", "qcvr_all", "sota_all"]))
+                        choices=baseline_choices())
     parser.add_argument("--max_samples", type=int, default=-1)
     parser.add_argument("--n_runs",      type=int, default=1,
                         help="Repeat stochastic baselines N times (default 1)")
@@ -365,50 +190,15 @@ def main() -> None:
     args = parser.parse_args()
 
     set_seed(args.seed)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir   = os.path.join(args.output_dir, timestamp)
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir = timestamped_output_dir(args.output_dir)
 
     # Save experiment config
-    with open(os.path.join(out_dir, "config.json"), "w") as f:
-        json.dump(vars(args), f, indent=2)
+    save_json(os.path.join(out_dir, "config.json"), vars(args))
 
     splits    = (["random", "popular", "adversarial"]
                  if args.split == "all" else [args.split])
 
-    # Determine which baseline sets to run
-    if args.slim or args.key_only or args.baseline in ("all", "required"):
-        raw_baselines  = DEFAULT_BASELINES
-        if args.no_stochastic:
-            raw_baselines = {k: v for k, v in raw_baselines.items()
-                             if not v.get("stochastic", False)}
-        baselines      = raw_baselines
-        qcvr_baselines = {} if args.no_qcvr_baselines else DEFAULT_QCVR
-        if args.no_sota_baselines:
-            sota_baselines = {}
-        else:
-            sota_baselines = {k: v for k, v in DEFAULT_SOTA.items()
-                              if not (args.no_vcd and k == "vcd")}
-    elif args.baseline == "qcvr_all":
-        baselines      = {}
-        qcvr_baselines = QCVR_BASELINES
-        sota_baselines = {}
-    elif args.baseline == "sota_all":
-        baselines      = {}
-        qcvr_baselines = {}
-        sota_baselines = SOTA_BASELINES
-    elif args.baseline in QCVR_BASELINES:
-        baselines      = {}
-        qcvr_baselines = {args.baseline: QCVR_BASELINES[args.baseline]}
-        sota_baselines = {}
-    elif args.baseline in SOTA_BASELINES:
-        baselines      = {}
-        qcvr_baselines = {}
-        sota_baselines = {args.baseline: SOTA_BASELINES[args.baseline]}
-    else:
-        baselines      = {args.baseline: BASELINES[args.baseline]}
-        qcvr_baselines = {}
-        sota_baselines = {}
+    baselines, sota_baselines, qcvr_baselines = select_baseline_groups(args)
 
     # Model caches (populated on demand, freed between phases)
     qcvr_model_cache: Dict[str, QCVRWrapper] = {}
@@ -515,13 +305,11 @@ def main() -> None:
     # Unload shared model after Phase 1+2, before QCVR which needs eager attn
     if model is not None and qcvr_baselines:
         print("\n[INFO] Unloading base model to free GPU memory for QCVR...")
-        import gc
         sota_model_cache.clear()
         _raw_model = None
         _raw_proc  = None
         del model
-        gc.collect()
-        torch.cuda.empty_cache()
+        release_memory()
 
     # ── Phase 3: QCVR/IACD baselines ───────────────────────────────────────
     if qcvr_baselines:
@@ -557,16 +345,13 @@ def main() -> None:
         # Unload this QCVR model before loading the next one
         key = f"{cfg['use_qcvr']}_{cfg['use_iacd']}_{cfg['lm_layer']}_{cfg['tau']}_{cfg['lambda_']}"
         qcvr_model_cache.pop(key, None)
-        import gc
         del qm
-        gc.collect()
-        torch.cuda.empty_cache()
+        release_memory()
 
     # Save per-split JSON results
     for split in splits:
         out_path = os.path.join(out_dir, f"pope_{split}.json")
-        with open(out_path, "w") as f:
-            json.dump(all_results[split], f, indent=2)
+        save_json(out_path, all_results[split])
         print(f"  → {out_path}")
 
     elapsed = time.time() - t_start
@@ -591,8 +376,7 @@ def main() -> None:
         print(row)
 
     out_path = os.path.join(out_dir, "pope_all.json")
-    with open(out_path, "w") as f:
-        json.dump(all_results, f, indent=2)
+    save_json(out_path, all_results)
     print(f"\nAll results → {out_dir}/")
 
 

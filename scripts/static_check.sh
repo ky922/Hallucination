@@ -9,5 +9,7 @@ bash -n hallucination/quick_test.sh
 
 python -m py_compile $(git ls-files \
   'hallucination/*.py' \
+  'hallucination/configs/*.py' \
   'hallucination/eval/*.py' \
-  'hallucination/models/*.py')
+  'hallucination/models/*.py' \
+  'hallucination/utils/*.py')

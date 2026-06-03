@@ -30,8 +30,10 @@ cloud-instance helper scripts, model weights, or datasets.
 
 ```text
 hallucination/
+  configs/                Baseline presets and experiment group selection
   models/                 LLaVA, QCVR/IACD, VCD, and ICD wrappers
   eval/                   POPE, CHAIR, and bootstrap evaluation code
+  utils/                  Shared runtime helpers
   run_pope.py             POPE evaluation entry point
   run_chair.py            CHAIR evaluation entry point
   bench_latency.py        Latency benchmark
@@ -41,6 +43,7 @@ hallucination/
 docs/
   ARTIFACT.md             Artifact and reproducibility notes
   ASSETS.md               External model, dataset, and method assets
+  CODE_STRUCTURE.md       Code organization and execution flow
   REPRODUCIBILITY.md      Short checklist for reviewers/users
 scripts/
   static_check.sh          Local shell/Python syntax checks
@@ -117,6 +120,7 @@ ignored by Git.
 Run local syntax checks:
 
 ```bash
+cd ..
 bash scripts/static_check.sh
 ```
 
@@ -136,7 +140,8 @@ Use `--model_id` on the evaluation scripts to change the Hugging Face model.
 
 See [docs/ARTIFACT.md](docs/ARTIFACT.md) for hardware assumptions, expected
 outputs, metrics, runtime estimates, and reproducibility notes. See
-[docs/ASSETS.md](docs/ASSETS.md) for external assets and
+[docs/CODE_STRUCTURE.md](docs/CODE_STRUCTURE.md) for the code organization,
+[docs/ASSETS.md](docs/ASSETS.md) for external assets, and
 [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md) for a short checklist.
 
 ## License
