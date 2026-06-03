@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+
+# Data, model caches, and generated experiment outputs
+hallucination/data/
+hallucination/checkpoints/
+hallucination/models_cache/
+hallucination/.cache/
+hallucination/results/
+hallucination/tools/
+hallucination/run_all_fixes.sh
+paper/
+
+# Runtime logs
+*.log
+nohup.out
